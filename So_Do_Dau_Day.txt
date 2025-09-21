@@ -1,0 +1,34 @@
+           +5V
+            |
+           VCC
+           DS3231  SDA --- A4
+           DS3231  SCL --- A5
+           GND ------ GND
+
+          HX711
+  Red (VCC)  ----- 5V
+  Black (GND) ----- GND
+  White (DT)  ----- A0
+  Green (SCK) ----- A1
+
+          SD Card
+  CS  ------------ 10
+  MOSI ------------ 11
+  MISO ------------ 12
+  SCK  ------------ 13
+  VCC ------------- 5V
+  GND ------------- GND
+
+          Motor
+  IN  ------------- 3
+  GND ------------- GND
+  VCC ------------- 5V/12V (tùy motor)
+
+          Button
+  Pin 2 ----------- o Button o --------- GND
+
+          ESP8266
+  TX  ------------- 7 (RX Arduino)
+  RX  ------------- 6 (TX Arduino)
+  GND ------------- GND
+  VCC ------------- 3.3V
