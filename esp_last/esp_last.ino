@@ -10,7 +10,7 @@ const char* ssid = "Trung Tin 2";
 const char* password = "0706942875@@";
 
 // Server endpoints
-const char* logServer = "http://webhook.site/485b5af4-3dc6-482f-a938-7db149bd4806";
+const char* logServer = "http://webhook.site/7a334544-4be3-48bf-a84a-79e26b07ac90";
 // const char* commandServer = "http://webhook.site/2bbcfe9c-14bf-40a6-ad16-8bd2fa89ffff"; // temporarily disabled
 
 // Timing
@@ -185,13 +185,28 @@ void handleCommandJson(String input) {
   else if (command == "status") {
     sendSystemStatus();
   } 
-  else if( command == "delete_log"){
+  else if (command == "delete_log") {
     arduinoSerial.println("DEL_LOG");
+    Serial.println("Delete log request sent");
   }
+  // === Lệnh mới thêm ===
+  else if (command == "get_time") {
+    
+    arduinoSerial.println("GET_TIME");
+    Serial.println("Requested RTC time from Arduino");
+  }
+  else if (command == "set_time") {
+    String datetime = doc["datetime"];  
+    // datetime format: "2025-10-02 15:45:00"
+    arduinoSerial.println("SETTIME:" + datetime);
+    Serial.println("Set RTC time request sent: " + datetime);
+  }
+  // =====================
   else {
     Serial.println("Unknown command");
   }
 }
+
 
 // ==================== Send Data to Server ====================
 void sendScheduleToServer(String scheduleBuffer) {

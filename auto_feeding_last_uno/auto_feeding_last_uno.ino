@@ -3,17 +3,18 @@
 #include <SD.h>
 #include <SoftwareSerial.h>
 #include <Wire.h>
-#include <DS3231.h>
+#include <RTClib.h>   // Dùng RTClib chuẩn
 
 // Khởi tạo thiết bị
 HX711_ADC LoadCell(A0, A1);
 SoftwareSerial espSerial(7, 6);
-RTClib myRTC;
+RTC_DS3231 myRTC;   // RTC DS3231 chuẩn
 
 // Pins
 const byte chipSelect = 10;
 const byte feedButton = 2;
 const byte feedMotor = 3;
+const byte releaseMotor = 5; 
 
 // Biến toàn cục
 float currentWeight = 0;
@@ -49,6 +50,22 @@ void setup() {
 
   pinMode(feedButton, INPUT_PULLUP);
   pinMode(feedMotor, OUTPUT);
+  pinMode(releaseMotor, OUTPUT);
+  digitalWrite(feedMotor, LOW);
+  digitalWrite(releaseMotor, LOW);
+
+  // ===== Khởi tạo RTC DS3231 =====
+  if (!myRTC.begin()) {
+    Serial.println(F("Không tìm thấy DS3231!"));
+    while (1);
+  }
+
+  if (myRTC.lostPower()) {
+    Serial.println(F("RTC mất nguồn, set lại thời gian..."));
+    // Chỉ set khi RTC mất nguồn
+    myRTC.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+  // ===============================
 
   loadSchedule();
   Serial.println(F("Ready"));
@@ -71,16 +88,14 @@ void loop() {
 
   // Kiểm tra lịch (mỗi 10s)
   if (millis() - lastCheck > 10000) {
-    DateTime now = myRTC.now(); // Lấy thời gian hiện tại từ RTC
     checkAutoFeed();
-
     lastCheck = millis();
   }
 
   // Kiểm tra lệnh ESP8266
   checkESPCommands();
 
-  // Gửi log định kỳ (mỗi 2 giờ)
+  // Gửi log định kỳ (mỗi 2 phút để test)
   if (millis() - lastLogSend > 120000) {
     sendTodayLog();
     lastLogSend = millis();
@@ -91,18 +106,22 @@ void loop() {
 
 void feedProcess(byte targetAmount) {
   isFeeding = true;
-  float target = targetAmount / 10.0;
+  float target = targetAmount / 10.0;   // đổi ra kg
   float initial = currentWeight;
   float fed = 0;
+  float time = targetAmount * 0.5;
 
+  // Bắt đầu chạy motor nạp
   digitalWrite(feedMotor, HIGH);
 
   while (fed < target && isFeeding) {
     LoadCell.update();
     currentWeight = LoadCell.getData();
     fed = currentWeight - initial;
+    Serial.print(F("Đã nạp: "));
+    Serial.println(fed);
 
-    // Dừng khẩn cấp (giữ 2s)
+    // Dừng khẩn cấp (giữ nút 2s)
     if (digitalRead(feedButton) == LOW) {
       delay(2000);
       if (digitalRead(feedButton) == LOW) {
@@ -112,9 +131,21 @@ void feedProcess(byte targetAmount) {
     delay(100);
   }
 
+  // Dừng motor nạp
   digitalWrite(feedMotor, LOW);
+
+  // Nếu quá trình không bị hủy thì chạy motor xả
+  if (isFeeding) {
+    Serial.println(F("Đang xả xuống ao..."));
+    digitalWrite(releaseMotor, HIGH);
+    
+    delay(time);  
+    digitalWrite(releaseMotor, LOW);
+  }
+
   isFeeding = false;
 }
+
 
 void checkAutoFeed() {
   DateTime now = myRTC.now();
@@ -327,6 +358,7 @@ void parseScheduleItem(String item) {
       schedule[scheduleCount].amount = amount;
       schedule[scheduleCount].enabled = enabled;
       scheduleCount++;
-    }
+    }     
   }
 }
+                          
