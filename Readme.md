@@ -1,4 +1,4 @@
-# 🐟 ESP8266 Feeding System
+# 🐟 Auto Feeding System
 
 ## 📘 1. Giới thiệu
 
