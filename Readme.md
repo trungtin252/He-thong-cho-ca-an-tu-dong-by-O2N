@@ -1,162 +1,163 @@
-🐟 ESP8266 Feeding System
+# 🐟 ESP8266 Feeding System
 
-1. Giới thiệu
+## 📘 1. Giới thiệu
 
-Đây là chương trình chạy trên ESP8266 dùng để kết nối Arduino (điều khiển máy cho cá ăn) với server.
-ESP8266 sẽ:
+Chương trình này chạy trên **ESP8266** để kết nối **Arduino** (điều khiển máy cho cá ăn) với **server**.  
+ESP8266 sẽ đảm nhiệm các chức năng chính sau:
 
-Nhận dữ liệu từ Arduino (lịch cho ăn, nhật ký, thời gian thực).
+- 📡 **Nhận dữ liệu** từ Arduino (lịch cho ăn, nhật ký, thời gian thực).
+- 🌐 **Gửi dữ liệu** này lên server qua HTTP/JSON.
+- 🔁 **Nhận lệnh** từ Serial hoặc Server rồi **forward xuống Arduino**.
+- ❤️ **Gửi heartbeat** và status định kỳ để giám sát hệ thống.
 
-Gửi dữ liệu này lên server qua HTTP/JSON.
+---
 
-Nhận lệnh từ Serial hoặc Server rồi forward xuống Arduino.
+## ⚙️ 2. Yêu cầu phần cứng
 
-Gửi heartbeat và status định kỳ để giám sát hệ thống.
+| Thành phần              | Mô tả                     |
+| ----------------------- | ------------------------- |
+| 🧠 **ESP8266**          | NodeMCU, Wemos D1 Mini, … |
+| 🤖 **Arduino Uno/Nano** | hoặc tương tự             |
+| ⏰ **RTC Module**       | DS3231 hoặc tương đương   |
+| ⚙️ **Module động cơ**   | Dùng cho hệ thống cho ăn  |
+| 🔌 **Kết nối UART**     | ESP8266 ↔ Arduino         |
 
-2. Yêu cầu phần cứng
+### 🔧 Kết nối UART
 
-ESP8266 (NodeMCU, Wemos D1 Mini, …).
+| ESP8266 Pin | Arduino Pin | Chức năng    |
+| ----------- | ----------- | ------------ |
+| D1 (GPIO5)  | TX          | Nhận dữ liệu |
+| D2 (GPIO4)  | RX          | Gửi dữ liệu  |
 
-Arduino Uno/Nano (hoặc tương tự).
+---
 
-RTC Module (DS3231 hoặc tương đương).
+## 🧩 3. Cách cài đặt
 
-Module động cơ cho hệ thống cho ăn.
+### 🪜 Bước 1: Chuẩn bị
 
-Dây nối UART:
+1. Cài **Arduino IDE**.
+2. Cài **ESP8266 board** trong Arduino IDE  
+   _(Board Manager → esp8266 by ESP8266 Community)_
+3. Cài **thư viện cần thiết**:
+   ```cpp
+   ESP8266WiFi
+   ESP8266HTTPClient
+   ArduinoJson
+   SoftwareSerial
+   ```
 
-ESP8266 D1 (GPIO5) → Arduino TX
+---
 
-ESP8266 D2 (GPIO4) → Arduino RX
+### 🌐 Bước 2: Cấu hình WiFi và server
 
-3. Cách cài đặt
-   Bước 1: Chuẩn bị
+Trong file code, thay đổi các thông tin dưới đây:
 
-Cài Arduino IDE.
-
-Cài ESP8266 board trong Arduino IDE (Board Manager → esp8266 by ESP8266 Community).
-
-Cài thư viện cần thiết:
-
-ESP8266WiFi
-
-ESP8266HTTPClient
-
-ArduinoJson
-
-SoftwareSerial
-
-Bước 2: Cấu hình WiFi và server
-
-Trong file code:
-
+```cpp
 const char* ssid = "Tên WiFi";
 const char* password = "Mật khẩu WiFi";
 
 const char* logServer = "http://your-server/receiver.php";
 // const char* commandServer = "http://your-server/command.php"; // có thể bật lại
+```
 
-Thay ssid và password bằng WiFi của bạn.
+🔧 **Thay thế:**
 
-Thay logServer bằng địa chỉ server của bạn.
+- `ssid`, `password`: thông tin WiFi của bạn
+- `logServer`: địa chỉ server của bạn
 
-Bước 3: Nạp code
+---
 
-Chọn board NodeMCU 1.0 (ESP-12E Module) hoặc board ESP8266 tương ứng.
+### 🚀 Bước 3: Nạp code
 
-Kết nối ESP8266 qua cáp USB.
+1. Chọn board: **NodeMCU 1.0 (ESP-12E Module)** hoặc board tương ứng.
+2. Kết nối ESP8266 qua **USB**.
+3. Nhấn **Upload** để nạp chương trình.
 
-Nhấn Upload.
+---
 
-Bước 4: Kiểm tra kết nối
+### 🔍 Bước 4: Kiểm tra kết nối
 
-Mở Serial Monitor (9600 baud).
+1. Mở **Serial Monitor (9600 baud)**.
+2. Khi ESP kết nối WiFi thành công → sẽ in ra **IP Address**.
+3. Nếu gửi dữ liệu thành công → sẽ thấy log như:
+   ```
+   Schedule sent
+   Logs sent
+   Heartbeat sent
+   ```
 
-Chờ ESP kết nối WiFi → sẽ in ra IP Address.
+---
 
-Nếu gửi dữ liệu thành công → log sẽ hiện "Schedule sent", "Logs sent", "Heartbeat sent".
+## 🧠 4. Gửi lệnh điều khiển
 
-4. Gửi lệnh điều khiển
+Bạn có thể gửi **lệnh JSON** qua Serial Monitor (hoặc từ server).
 
-Bạn có thể gửi lệnh JSON qua Serial Monitor (hoặc qua server).
-Ví dụ:
+| 📜 Lệnh                | 💬 Ví dụ JSON                                                       |
+| ---------------------- | ------------------------------------------------------------------- |
+| Lấy logs               | `{ "command": "get_logs" }`                                         |
+| Lấy schedule           | `{ "command": "get_schedule" }`                                     |
+| Cho ăn 0.5kg           | `{ "command": "feed", "amount": 0.5 }`                              |
+| Cập nhật lịch          | `{ "command": "update_schedule", "schedule": "08:00,12:00,18:00" }` |
+| Xóa log                | `{ "command": "delete_log" }`                                       |
+| Lấy thời gian RTC      | `{ "command": "get_time" }`                                         |
+| Cập nhật thời gian RTC | `{ "command": "set_time", "datetime": "2025-10-02 15:45:00" }`      |
 
-Lấy logs
-{ "command": "get_logs" }
+---
 
-Lấy schedule
-{ "command": "get_schedule" }
+## 📤 5. Dữ liệu ESP gửi lên server
 
-Cho ăn 0.5kg
-{ "command": "feed", "amount": 0.5 }
+ESP8266 gửi dữ liệu qua **HTTP POST** dạng **JSON**.
 
-Cập nhật lịch
-{ "command": "update_schedule", "schedule": "08:00,12:00,18:00" }
+### 🗓️ Schedule
 
-Xóa log
-{ "command": "delete_log" }
-
-Lấy thời gian RTC
-{ "command": "get_time" }
-
-Cập nhật thời gian RTC
-{ "command": "set_time", "datetime": "2025-10-02 15:45:00" }
-
-5. Dữ liệu ESP gửi lên server
-
-ESP gửi dữ liệu qua HTTP POST với JSON:
-
-Schedule
-
+```json
 {
-"type": "schedule",
-"device": "feeding_system",
-"timestamp": 123456,
-"data": ["08:00", "12:00", "18:00"]
+  "type": "schedule",
+  "device": "feeding_system",
+  "timestamp": 123456,
+  "data": ["08:00", "12:00", "18:00"]
 }
+```
 
-Logs
+### 📖 Logs
 
+```json
 {
-"type": "logs",
-"date": "2025-10-02",
-"data": "08:00 - Fed 0.5kg\n12:00 - Fed 0.5kg\n",
-"device": "feeding_system",
-"timestamp": 123456
+  "type": "logs",
+  "date": "2025-10-02",
+  "data": "08:00 - Fed 0.5kg\n12:00 - Fed 0.5kg\n",
+  "device": "feeding_system",
+  "timestamp": 123456
 }
+```
 
-Status
+### 🧾 Status
 
+```json
 {
-"type": "status",
-"wifi_rssi": -60,
-"free_heap": 35000,
-"uptime": 123456,
-"ip": "192.168.1.50"
+  "type": "status",
+  "wifi_rssi": -60,
+  "free_heap": 35000,
+  "uptime": 123456,
+  "ip": "192.168.1.50"
 }
+```
 
-Heartbeat
+### ❤️ Heartbeat
 
+```json
 {
-"type": "heartbeat",
-"device": "feeding_system",
-"timestamp": 123456
+  "type": "heartbeat",
+  "device": "feeding_system",
+  "timestamp": 123456
 }
+```
 
-6. Chu kỳ hoạt động
+---
 
-ESP kết nối WiFi.
+## 🔁 6. Chu kỳ hoạt động
 
-Nghe dữ liệu từ Arduino → nếu có thì gửi server.
-
-Gửi heartbeat mỗi 5 phút.
-
-Có thể nhận lệnh từ Serial hoặc server (nếu bật lại phần checkServerCommand()).
-
-7. Debug & kiểm tra
-
-Dùng Serial Monitor để xem log.
-
-Test nhanh bằng cách gửi JSON trong Serial Monitor.
-
-Server có thể viết bằng PHP để nhận/gửi lệnh (xem file receiver.php và command.php).
+1. 📶 Kết nối WiFi.
+2. 🔍 Nghe dữ liệu từ Arduino → nếu có thì gửi lên server.
+3. ❤️ Gửi **heartbeat** mỗi 5 phút.
+4. 💬 Có thể nhận lệnh từ **Serial** hoặc **Server** _(nếu bật checkServerCommand())_.
