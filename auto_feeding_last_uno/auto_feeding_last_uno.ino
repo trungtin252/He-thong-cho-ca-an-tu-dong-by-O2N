@@ -3,12 +3,12 @@
 #include <SD.h>
 #include <SoftwareSerial.h>
 #include <Wire.h>
-#include <RTClib.h>   // Dùng RTClib chuẩn
+#include <RTClib.h> 
 
 // Khởi tạo thiết bị
 HX711_ADC LoadCell(A0, A1);
 SoftwareSerial espSerial(7, 6);
-RTC_DS3231 myRTC;   // RTC DS3231 chuẩn
+RTC_DS3231 myRTC;
 
 // Pins
 const byte chipSelect = 10;
@@ -18,6 +18,7 @@ const byte releaseMotor = 5;
 
 // Biến toàn cục
 float currentWeight = 0;
+float currentWeight2 = 1000000;
 bool isFeeding = false;
 unsigned long lastCheck = 0;
 unsigned long lastLogSend = 0;
@@ -41,7 +42,7 @@ void setup() {
   // Khởi tạo LoadCell
   LoadCell.begin();
   LoadCell.start(2000);
-  LoadCell.setCalFactor(999.0);
+  LoadCell.setCalFactor(402018.2292);
 
   if (!SD.begin(chipSelect)) {
     Serial.println(F("SD failed"));
@@ -109,7 +110,7 @@ void feedProcess(byte targetAmount) {
   float target = targetAmount / 10.0;   // đổi ra kg
   float initial = currentWeight;
   float fed = 0;
-  float time = targetAmount * 0.5;
+  float time = targetAmount * 12000;
 
   // Bắt đầu chạy motor nạp
   digitalWrite(feedMotor, HIGH);
@@ -119,7 +120,7 @@ void feedProcess(byte targetAmount) {
     currentWeight = LoadCell.getData();
     fed = currentWeight - initial;
     Serial.print(F("Đã nạp: "));
-    Serial.println(fed);
+    Serial.println(fed, 4);
 
     // Dừng khẩn cấp (giữ nút 2s)
     if (digitalRead(feedButton) == LOW) {
@@ -138,11 +139,21 @@ void feedProcess(byte targetAmount) {
   if (isFeeding) {
     Serial.println(F("Đang xả xuống ao..."));
     digitalWrite(releaseMotor, HIGH);
-    
-    delay(time);  
+    delay(1000);
+    currentWeight2 = LoadCell.getData();
+    while (currentWeight2 > 0.001 ) {
+      LoadCell.update();
+      currentWeight2 = LoadCell.getData();
+      Serial.print(F("TL hien tai: "));
+      Serial.println(currentWeight2, 4);
+    }
+    delay(1000);
     digitalWrite(releaseMotor, LOW);
-  }
-
+    espSerial.println(F("FEED_DONE"));
+    delay(100);
+    Serial.println(F("Đã xả xong"));
+  } 
+   
   isFeeding = false;
 }
 
@@ -180,7 +191,38 @@ void checkESPCommands() {
       updateSchedule(cmd.substring(9));
     } else if (cmd == F("DEL_LOG")) {
       deleteLog();
+    }else if (cmd.startsWith(F("SETTIME:"))) {
+      String data = cmd.substring(8);
+      int y = data.substring(0,4).toInt();
+      int M = data.substring(5,7).toInt();
+      int d = data.substring(8,10).toInt();
+      int h = data.substring(11,13).toInt();
+      int m = data.substring(14,16).toInt();
+      int s = data.substring(17,19).toInt();
+
+      myRTC.adjust(DateTime(y, M, d, h, m, s));
+      espSerial.println(F("RTC_UPDATED"));
+    }else if (cmd == F("GET_TIME")) {
+      DateTime now = myRTC.now();
+      espSerial.print(F("TIME:"));
+      espSerial.print(now.year());
+      espSerial.print('-');
+      if (now.month() < 10) espSerial.print('0');
+      espSerial.print(now.month());
+      espSerial.print('-');
+      if (now.day() < 10) espSerial.print('0');
+      espSerial.print(now.day());
+      espSerial.print(' ');
+      if (now.hour() < 10) espSerial.print('0');
+      espSerial.print(now.hour());
+      espSerial.print(':');
+      if (now.minute() < 10) espSerial.print('0');
+      espSerial.print(now.minute());
+      espSerial.print(':');
+      if (now.second() < 10) espSerial.print('0');
+      espSerial.println(now.second());
     }
+
   }
 }
 
