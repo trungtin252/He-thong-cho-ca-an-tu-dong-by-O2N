@@ -19,9 +19,10 @@ const byte releaseMotor = 5;
 // Biến toàn cục
 float currentWeight = 0;
 float currentWeight2 = 1000000;
+float maxTimePerKg = 1.8;
 bool isFeeding = false;
 unsigned long lastCheck = 0;
-unsigned long lastLogSend = 0;
+
 
 // Lịch cho ăn tối ưu
 struct Schedule {
@@ -46,6 +47,8 @@ void setup() {
 
   if (!SD.begin(chipSelect)) {
     Serial.println(F("SD failed"));
+    delay(2000);
+    espSerial.println(F("ERROR_SD"));
     return;
   }
 
@@ -57,23 +60,27 @@ void setup() {
 
   // ===== Khởi tạo RTC DS3231 =====
   if (!myRTC.begin()) {
+    delay(4000);
+    espSerial.println(F("ERROR_RTC_FIND"));
     Serial.println(F("Không tìm thấy DS3231!"));
     while (1);
   }
 
   if (myRTC.lostPower()) {
-    Serial.println(F("RTC mất nguồn, set lại thời gian..."));
-    // Chỉ set khi RTC mất nguồn
-    myRTC.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    delay(3000);
+    espSerial.println(F("ERROR_RTC_POWER_LOST"));
+    // myRTC.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
   // ===============================
 
   loadSchedule();
+  delay(500);
+  loadMaxTime();
   Serial.println(F("Ready"));
+  espSerial.println(F("Arduino_OK"));
 }
 
 void loop() {
-  // Cập nhật trọng lượng
   LoadCell.update();
   currentWeight = LoadCell.getData();
 
@@ -81,8 +88,9 @@ void loop() {
   if (digitalRead(feedButton) == LOW && !isFeeding) {
     delay(50);
     if (digitalRead(feedButton) == LOW) {
-      feedProcess(10);  // 1.0kg
-      writeLog(F("MANUAL"), 10);
+      espSerial.println(F("FEED_START"));
+      bool success = feedProcess(10);  // 1.0kg
+      writeLog(F("MANUAL"), 10, success);
       while (digitalRead(feedButton) == LOW);
     }
   }
@@ -96,21 +104,18 @@ void loop() {
   // Kiểm tra lệnh ESP8266
   checkESPCommands();
 
-  // Gửi log định kỳ (mỗi 2 phút để test)
-  if (millis() - lastLogSend > 120000) {
-    sendTodayLog();
-    lastLogSend = millis();
-  }
-
   delay(100);
 }
 
-void feedProcess(byte targetAmount) {
+bool feedProcess(byte targetAmount) {
   isFeeding = true;
+  bool success = true;
   float target = targetAmount / 10.0;   // đổi ra kg
   float initial = currentWeight;
   float fed = 0;
-  float time = targetAmount * 12000;
+  unsigned long lastSendTime = 0;
+  unsigned long startFeedTime = millis();
+  unsigned long maxFeedTime = (unsigned long)(target * maxTimePerKg * 60 * 1000);
 
   // Bắt đầu chạy motor nạp
   digitalWrite(feedMotor, HIGH);
@@ -119,16 +124,36 @@ void feedProcess(byte targetAmount) {
     LoadCell.update();
     currentWeight = LoadCell.getData();
     fed = currentWeight - initial;
-    Serial.print(F("Đã nạp: "));
-    Serial.println(fed, 4);
+    if (fed < 0) fed = 0; 
+
+    // Gửi dữ liệu về ESP mỗi 1 giây
+    if (millis() - lastSendTime >= 1000) {
+      lastSendTime = millis();
+      espSerial.print(F("FEEDING,"));
+      espSerial.print(fed, 3);
+      espSerial.print(F(",")); 
+      espSerial.println(currentWeight, 3);
+    }
+
+    // Kiểm tra quá thời gian 30 giây
+    if (millis() - startFeedTime > maxFeedTime) {
+      espSerial.println(F("FEED_ERROR,TIMEOUT"));
+      isFeeding = false;
+      success = false;
+      break;
+    }
 
     // Dừng khẩn cấp (giữ nút 2s)
     if (digitalRead(feedButton) == LOW) {
       delay(2000);
       if (digitalRead(feedButton) == LOW) {
+        espSerial.println(F("FEED_ERROR,MANUAL_STOP"));
         isFeeding = false;
+        success = false;
+        break;
       }
     }
+
     delay(100);
   }
 
@@ -137,27 +162,34 @@ void feedProcess(byte targetAmount) {
 
   // Nếu quá trình không bị hủy thì chạy motor xả
   if (isFeeding) {
-    Serial.println(F("Đang xả xuống ao..."));
     digitalWrite(releaseMotor, HIGH);
     delay(1000);
     currentWeight2 = LoadCell.getData();
-    while (currentWeight2 > 0.001 ) {
+    unsigned long lastReleaseSend = millis();
+
+    while (currentWeight2 > 0.01) {
       LoadCell.update();
       currentWeight2 = LoadCell.getData();
-      Serial.print(F("TL hien tai: "));
-      Serial.println(currentWeight2, 4);
+
+      if (millis() - lastReleaseSend >= 1000) {
+        lastReleaseSend = millis();
+        espSerial.print(F("RELEASING,"));
+        espSerial.println(currentWeight2, 4);
+      }
     }
-    delay(1000);
+    delay(5000);
     digitalWrite(releaseMotor, LOW);
     espSerial.println(F("FEED_DONE"));
-    delay(100);
     Serial.println(F("Đã xả xong"));
-  } 
-   
+  }
+
   isFeeding = false;
+  return success;
 }
 
-
+// ===============================
+//      KIỂM TRA LỊCH TỰ ĐỘNG
+// ===============================
 void checkAutoFeed() {
   DateTime now = myRTC.now();
   byte h = now.hour();
@@ -165,69 +197,19 @@ void checkAutoFeed() {
 
   for (byte i = 0; i < scheduleCount; i++) {
     if (schedule[i].enabled && schedule[i].hour == h && schedule[i].minute == m) {
-      feedProcess(schedule[i].amount);
-      writeLog(F("AUTO"), schedule[i].amount);
-      delay(61000);  // Tránh lặp trong cùng phút
+      espSerial.println(F("FEED_START"));
+      bool success = feedProcess(schedule[i].amount);
+      writeLog(F("AUTO"), schedule[i].amount, success);
+      delay(61000);
       break;
     }
   }
 }
 
-void checkESPCommands() {
-  if (espSerial.available()) {
-    String cmd = espSerial.readStringUntil('\n');
-    cmd.trim();
-    Serial.println(cmd);
-
-    if (cmd == F("GET_LOG")) {
-      sendTodayLog();
-    } else if (cmd == F("GET_SCHEDULE")) {
-      sendSchedule();
-    } else if (cmd.startsWith(F("FEED:"))) {
-      byte amount = cmd.substring(5).toInt();
-      feedProcess(amount);
-      writeLog(F("SERVER"), amount);
-    } else if (cmd.startsWith(F("SCHEDULE:"))) {
-      updateSchedule(cmd.substring(9));
-    } else if (cmd == F("DEL_LOG")) {
-      deleteLog();
-    }else if (cmd.startsWith(F("SETTIME:"))) {
-      String data = cmd.substring(8);
-      int y = data.substring(0,4).toInt();
-      int M = data.substring(5,7).toInt();
-      int d = data.substring(8,10).toInt();
-      int h = data.substring(11,13).toInt();
-      int m = data.substring(14,16).toInt();
-      int s = data.substring(17,19).toInt();
-
-      myRTC.adjust(DateTime(y, M, d, h, m, s));
-      espSerial.println(F("RTC_UPDATED"));
-    }else if (cmd == F("GET_TIME")) {
-      DateTime now = myRTC.now();
-      espSerial.print(F("TIME:"));
-      espSerial.print(now.year());
-      espSerial.print('-');
-      if (now.month() < 10) espSerial.print('0');
-      espSerial.print(now.month());
-      espSerial.print('-');
-      if (now.day() < 10) espSerial.print('0');
-      espSerial.print(now.day());
-      espSerial.print(' ');
-      if (now.hour() < 10) espSerial.print('0');
-      espSerial.print(now.hour());
-      espSerial.print(':');
-      if (now.minute() < 10) espSerial.print('0');
-      espSerial.print(now.minute());
-      espSerial.print(':');
-      if (now.second() < 10) espSerial.print('0');
-      espSerial.println(now.second());
-    }
-
-  }
-}
-
-
-void writeLog(const __FlashStringHelper* type, byte amount) {
+// ===============================
+//       GHI LOG CÓ SUCCESS/FAIL
+// ===============================
+void writeLog(const __FlashStringHelper* type, byte amount, bool success) {
   DateTime now = myRTC.now();
 
   File logFile = SD.open(F("LOG.txt"), FILE_WRITE);
@@ -247,8 +229,91 @@ void writeLog(const __FlashStringHelper* type, byte amount) {
     logFile.print(type);
     logFile.print(',');
     logFile.print(amount / 10.0, 1);
-    logFile.println(F("KG"));
+    logFile.print(F("KG,"));
+    logFile.println(success ? F("SUCCESS") : F("FAIL"));
     logFile.close();
+  }
+}
+
+// ===============================
+//      PHẦN CÒN LẠI GIỮ NGUYÊN
+// ===============================
+
+void checkESPCommands() {
+  if (espSerial.available()) {
+    String cmd = espSerial.readStringUntil('\n');
+    cmd.trim();
+    Serial.println(cmd);
+
+    if (cmd == F("GET_LOG")) {
+      sendTodayLog();
+    } else if (cmd == F("GET_SCHEDULE")) {
+      sendSchedule();
+    } else if (cmd.startsWith(F("FEED:"))) {
+      byte amount = cmd.substring(5).toInt();
+      espSerial.println(F("FEED_START"));
+      bool success = feedProcess(amount);
+      writeLog(F("SERVER"), amount, success);
+    } else if (cmd.startsWith(F("SCHEDULE:"))) {
+      updateSchedule(cmd.substring(9));
+    } else if (cmd == F("DEL_LOG")) {
+      deleteLog();
+    } else if (cmd.startsWith(F("SETTIME:"))) {
+      String data = cmd.substring(8);
+      int y = data.substring(0,4).toInt();
+      int M = data.substring(5,7).toInt();
+      int d = data.substring(8,10).toInt();
+      int h = data.substring(11,13).toInt();
+      int m = data.substring(14,16).toInt();
+      int s = data.substring(17,19).toInt();
+      myRTC.adjust(DateTime(y, M, d, h, m, s));
+      espSerial.println(F("RTC_UPDATED"));
+    } else if (cmd == F("GET_TIME")) {
+      DateTime now = myRTC.now();
+      espSerial.print(F("TIME:"));
+      espSerial.print(now.year());
+      espSerial.print('-');
+      if (now.month() < 10) espSerial.print('0');
+      espSerial.print(now.month());
+      espSerial.print('-');
+      if (now.day() < 10) espSerial.print('0');
+      espSerial.print(now.day());
+      espSerial.print(' ');
+      if (now.hour() < 10) espSerial.print('0');
+      espSerial.print(now.hour());
+      espSerial.print(':');
+      if (now.minute() < 10) espSerial.print('0');
+      espSerial.print(now.minute());
+      espSerial.print(':');
+      if (now.second() < 10) espSerial.print('0');
+      espSerial.println(now.second());
+    }else if (cmd == F("GET_MAXTIME")) {
+      espSerial.print(F("MAXTIME:"));
+      espSerial.println(maxTimePerKg, 1);
+    }
+    else if (cmd.startsWith(F("SET_MAXTIME:"))) {
+      float newTime = cmd.substring(12).toFloat();
+      if (newTime > 0.5 && newTime < 10) {  // Giới hạn từ 0.5 - 10 phút/kg
+        maxTimePerKg = newTime;
+        saveMaxTime();  // ← LƯU VÀO SD
+        espSerial.print(F("MAXTIME_UPDATED:"));
+        espSerial.println(maxTimePerKg, 1);
+        Serial.print(F("Cập nhật maxTimePerKg: "));
+        Serial.println(maxTimePerKg);
+      } else {
+        espSerial.println(F("ERROR_INVALID_MAXTIME"));
+      }
+    }
+    else if (cmd == F("RESET")) {
+      deleteAllFiles();
+      espSerial.println(F("SD_RESET_DONE"));
+      Serial.println(F("Đã xóa toàn bộ nội dung thẻ SD!"));
+      delay(10000);
+      espSerial.println(F("Arduino_OK"));
+    }
+    else if (cmd == F("CHECK")) {
+      espSerial.println(F("Arduino_OK"));
+    }
   }
 }
 
@@ -263,13 +328,12 @@ void deleteLog() {
   }
 }
 
-
 void loadSchedule() {
   scheduleCount = 0;
   File f = SD.open(F("lich.txt"), FILE_READ);
   if (!f) {
-    schedule[0] = { 8, 0, 25, true };
-    schedule[1] = { 12, 0, 15, true };
+    schedule[0] = { 8, 0, 25, false };
+    schedule[1] = { 12, 0, 15, false };
     schedule[2] = { 18, 0, 20, false };
     schedule[3] = { 0, 0, 0, false };
     schedule[4] = { 0, 0, 0, false };
@@ -364,6 +428,7 @@ void sendSchedule() {
     espSerial.print(',');
     espSerial.println(schedule[i].enabled ? '1' : '0');
   }
+  delay(100);
   espSerial.println(F("END_SCHEDULES"));
 }
 
@@ -403,4 +468,61 @@ void parseScheduleItem(String item) {
     }     
   }
 }
-                          
+
+void deleteAllFiles() {
+  File root = SD.open("/");
+  if (!root) {
+    Serial.println(F("Không thể mở thư mục gốc của SD"));
+    return;
+  }
+
+  while (true) {
+    File entry = root.openNextFile();
+    if (!entry) break;
+    String name = entry.name();
+    entry.close();
+    if (SD.remove(name)) {
+      Serial.print(F("Đã xóa: "));
+      Serial.println(name);
+    } else {
+      Serial.print(F("Không thể xóa: "));
+      Serial.println(name);
+    }
+  }
+
+  root.close();
+}
+
+
+void loadMaxTime() {
+  File f = SD.open(F("maxtime.txt"), FILE_READ);
+  if (f) {
+    if (f.available()) {
+      String data = f.readStringUntil('\n');
+      data.trim();
+      float value = data.toFloat();
+      if (value > 0.5 && value < 10) {
+        maxTimePerKg = value;
+        Serial.print(F("Loaded maxTimePerKg: "));
+        Serial.println(maxTimePerKg);
+      }
+    }
+    f.close();
+  } else {
+    Serial.println(F("maxtime.txt not found, using default: 1.8"));
+    saveMaxTime();  // Tạo file mới với giá trị mặc định
+  }
+}
+
+void saveMaxTime() {
+  SD.remove(F("maxtime.txt"));
+  File f = SD.open(F("maxtime.txt"), FILE_WRITE);
+  if (f) {
+    f.println(maxTimePerKg, 1);
+    f.close();
+    Serial.print(F("Saved maxTimePerKg: "));
+    Serial.println(maxTimePerKg);
+  } else {
+    Serial.println(F("Error saving maxtime.txt"));
+  }
+}
